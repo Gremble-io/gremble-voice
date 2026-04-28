@@ -176,9 +176,6 @@ public actor ParakeetStreamingEngine: StreamingASREngine {
                     let (confirmed, unconfirmed) = WordDiff.diff(previous: previousText, current: current)
                     previousText = current
 
-                    // Drop samples we won't need again
-                    await buffer.trim(to: capturedConfig.maxBufferSamples)
-
                     let timings = result.tokenTimings?.map {
                         WordTiming(word: $0.token, startTime: $0.startTime, endTime: $0.endTime, confidence: $0.confidence)
                     }

@@ -4,7 +4,11 @@ reference/
 # Swift Package Manager
 .build/
 .swiftpm/
+Package.resolved
 Package.resolved.local
+
+# Claude Code
+.claude/
 
 # Xcode
 *.xcodeproj

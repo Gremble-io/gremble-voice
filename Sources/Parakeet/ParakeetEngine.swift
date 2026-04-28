@@ -61,10 +61,13 @@ public actor ParakeetEngine: ASREngine {
             throw ASREngineError.modelNotLoaded
         }
 
+        let layers = await asr.decoderLayerCount
+        var decoderState = TdtDecoderState.make(decoderLayers: layers)
+
         let start = Date()
         let result = try await asr.transcribe(
             samples,
-            source: source == .microphone ? .microphone : .system
+            decoderState: &decoderState
         )
         let elapsed = Date().timeIntervalSince(start)
         let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -50,7 +50,7 @@ public actor ParakeetModelManager {
         progressHandler?(0.9)
 
         let manager = AsrManager(config: .default)
-        try await manager.initialize(models: models)
+        try await manager.loadModels(models)
 
         asrManager = manager
         progressHandler?(1.0)

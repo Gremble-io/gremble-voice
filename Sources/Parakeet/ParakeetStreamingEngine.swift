@@ -39,8 +39,6 @@ public actor ParakeetStreamingEngine: StreamingASREngine {
     private var _textUpdates: AsyncStream<StreamingTextUpdate>?
     private var continuation: AsyncStream<StreamingTextUpdate>.Continuation?
 
-    private var streamSource: AudioStreamKind = .microphone
-
     // VAD-gated mode (active when pollingIntervalNs == 0)
     private var vadManager: VadManager?
     private var vadState: VadStreamState?
@@ -85,10 +83,13 @@ public actor ParakeetStreamingEngine: StreamingASREngine {
         guard let asr = await modelManager.asrManager else {
             throw ASREngineError.modelNotLoaded
         }
+        let layers = await asr.decoderLayerCount
+        var decoderState = TdtDecoderState.make(decoderLayers: layers)
+
         let start = Date()
         let result = try await asr.transcribe(
             samples,
-            source: source == .microphone ? .microphone : .system
+            decoderState: &decoderState
         )
         let elapsed = Date().timeIntervalSince(start)
         let timings = result.tokenTimings?.map {
@@ -124,8 +125,6 @@ public actor ParakeetStreamingEngine: StreamingASREngine {
         // Tear down any previous session
         await stopStreamingInternal()
 
-        streamSource = source
-
         // Initialize VAD for speech-gated mode
         if config.pollingIntervalNs == 0 {
             let vm = try await modelManager.makeVadManager()
@@ -146,11 +145,11 @@ public actor ParakeetStreamingEngine: StreamingASREngine {
         let capturedManager = modelManager
         let capturedConfig = config
         let capturedLog = log
-        let capturedSource = source
         let pollNs = config.pollingIntervalNs > 0 ? config.pollingIntervalNs : 200_000_000
 
         streamingTask = Task {
             var previousText = ""
+            let layerCount: Int = await capturedManager.asrManager?.decoderLayerCount ?? 2
 
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: pollNs)
@@ -166,9 +165,10 @@ public actor ParakeetStreamingEngine: StreamingASREngine {
                 guard let asr = await capturedManager.asrManager else { continue }
 
                 do {
+                    var decoderState = TdtDecoderState.make(decoderLayers: layerCount)
                     let result = try await asr.transcribe(
                         samples,
-                        source: capturedSource == .microphone ? .microphone : .system
+                        decoderState: &decoderState
                     )
                     let current = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !current.isEmpty else { continue }
@@ -255,9 +255,11 @@ public actor ParakeetStreamingEngine: StreamingASREngine {
            let buffer = audioBuffer {
             let remaining = await buffer.consume()
             if remaining.count >= 1600 {  // at least 0.1s
+                let layers = await asr.decoderLayerCount
+                var decoderState = TdtDecoderState.make(decoderLayers: layers)
                 let result = try? await asr.transcribe(
                     remaining,
-                    source: streamSource == .microphone ? .microphone : .system
+                    decoderState: &decoderState
                 )
                 finalText = result?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             }

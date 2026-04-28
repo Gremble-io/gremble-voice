@@ -309,7 +309,7 @@ public actor StreamingDiarizationEngine {
             speaker: label,
             startTime: TimeInterval(seg.startTime),
             endTime: TimeInterval(seg.endTime),
-            confidence: seg.confidence,
+            confidence: seg.activity,
             isFinalized: isFinalized
         )
     }

@@ -19,8 +19,7 @@ public actor MLXRefiner: TextRefiner {
 
     // MARK: - Configuration
 
-    /// Default model — Gemma 3 4B instruction-tuned, 4-bit quantised.
-    public static let defaultModelID = "mlx-community/gemma-3-4b-it-4bit"
+    public static let defaultModelID = "mlx-community/Llama-3.2-3B-Instruct-4bit"
 
     // MARK: - State
 
@@ -110,24 +109,6 @@ public actor MLXRefiner: TextRefiner {
     // MARK: - Private helpers
 
     private func buildSystemPrompt(context: RefinementContext?) -> String {
-        var prompt = """
-            You are a transcription refinement assistant. Clean up speech-to-text output by \
-            correcting grammar, punctuation, and obvious mis-heard words, while preserving the \
-            speaker's meaning and tone. Return only the refined text with no preamble or explanation.
-            """
-
-        if let ctx = context, !ctx.isEmpty {
-            prompt += "\n\nContext:"
-            if let app = ctx.activeAppName {
-                prompt += "\n- Active application: \(app)"
-            }
-            if let selected = ctx.selectedText {
-                prompt += "\n- Selected text (for formatting cues): \(selected)"
-            }
-            if let url = ctx.browserURL {
-                prompt += "\n- Browser URL: \(url)"
-            }
-        }
-        return prompt
+        PrefillMLXRefiner.defaultSystemPrompt(context: context)
     }
 }

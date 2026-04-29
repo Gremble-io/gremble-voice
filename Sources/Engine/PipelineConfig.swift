@@ -64,8 +64,8 @@ public extension PipelineConfig {
         case ollama(baseURL: String = "http://localhost:11434",
                     model: String = "gemma3:4b",
                     customPrompt: String? = nil)
-        /// On-device MLX LLM. Default: Gemma 3 4B instruction-tuned, 4-bit quantized.
-        case mlx(modelID: String = "mlx-community/gemma-3-4b-it-4bit",
+        /// On-device MLX LLM. Default: Llama 3.2 3B instruction-tuned, 4-bit quantized.
+        case mlx(modelID: String = "mlx-community/Llama-3.2-3B-Instruct-4bit",
                  customPrompt: String? = nil)
         /// Anthropic Claude API (BYOK).
         case claude(apiKey: String, model: String = "claude-3-5-haiku-latest")

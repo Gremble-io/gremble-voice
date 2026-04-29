@@ -660,6 +660,7 @@ public final class GrembleVoicePipeline {
 private final class ProgressThrottle: @unchecked Sendable {
     private var last: Double = 0
     func shouldReport(_ p: Double) -> Bool {
+        if p < last { last = 0 }
         if p >= 1.0 || p - last >= 0.01 {
             last = p
             return true

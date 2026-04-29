@@ -73,7 +73,9 @@ public final class GrembleVoicePipeline {
         isModelLoaded = false
         modelLoadProgress = 0
 
+        let throttle = ProgressThrottle()
         let wrappedProgress: @Sendable (Double) -> Void = { [weak self] p in
+            guard throttle.shouldReport(p) else { return }
             Task { @MainActor [weak self] in
                 self?.modelLoadProgress = p
                 progressHandler(p)
@@ -654,6 +656,17 @@ public final class GrembleVoicePipeline {
 }
 
 // MARK: - Errors
+
+private final class ProgressThrottle: @unchecked Sendable {
+    private var last: Double = 0
+    func shouldReport(_ p: Double) -> Bool {
+        if p >= 1.0 || p - last >= 0.01 {
+            last = p
+            return true
+        }
+        return false
+    }
+}
 
 public enum PipelineError: Error, LocalizedError {
     case modelNotLoaded

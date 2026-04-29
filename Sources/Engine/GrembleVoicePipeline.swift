@@ -55,6 +55,7 @@ public final class GrembleVoicePipeline {
     private var feedTask: Task<Void, Never>?
     private var recordingStart: Date?
     private let dictionaryProcessor = DictionaryProcessor()
+    private var prefillRefiner: PrefillMLXRefiner?
 
     // MARK: - Init
 
@@ -93,6 +94,15 @@ public final class GrembleVoicePipeline {
             whisperEngine = engine
         }
 
+        if case .mlx(let modelID, _) = config.refiner {
+            let refiner = prefillRefiner ?? PrefillMLXRefiner(modelID: modelID)
+            try await refiner.loadModel(progressHandler: wrappedProgress)
+            self.prefillRefiner = refiner
+        } else if prefillRefiner != nil {
+            await prefillRefiner?.unloadModel()
+            prefillRefiner = nil
+        }
+
         isModelLoaded = true
         modelLoadProgress = 1.0
         PipelineLogger.asr.info("Model loaded: \(self.config.asrEngine.displayName)")
@@ -102,6 +112,8 @@ public final class GrembleVoicePipeline {
     public func unloadModel() async {
         await parakeetEngine?.unloadModel()
         await whisperEngine?.unloadModel()
+        await prefillRefiner?.unloadModel()
+        prefillRefiner = nil
         isModelLoaded = false
         PipelineLogger.asr.info("Model unloaded")
     }
@@ -136,6 +148,12 @@ public final class GrembleVoicePipeline {
         PipelineLogger.audio.info(
             "Recording started — engine: \(self.config.asrEngine.displayName)"
         )
+
+        // Trigger prefill on the GPU while ASR runs on the ANE
+        if let prefillRefiner, case .mlx(_, let customPrompt) = config.refiner {
+            let prompt = customPrompt ?? PrefillMLXRefiner.defaultSystemPrompt(context: nil)
+            Task { try? await prefillRefiner.prefill(systemPrompt: prompt) }
+        }
 
         // Single consumer task: feeds samples to ASR + updates audio level meter
         feedTask = Task { [weak self] in
@@ -275,9 +293,9 @@ public final class GrembleVoicePipeline {
                     ? SensitiveDataFilter.filter(dictText).sanitizedText
                     : dictText
 
-                // Pass the custom prompt from config (if ollama mode has one)
                 let customPrompt: String?
                 if case .ollama(_, _, let prompt) = config.refiner { customPrompt = prompt }
+                else if case .mlx(_, let prompt) = config.refiner { customPrompt = prompt }
                 else { customPrompt = nil }
 
                 let rawResult = try await refiner.refine(
@@ -364,6 +382,7 @@ public final class GrembleVoicePipeline {
         public let context: RefinementContext
         public let refinerName: String
         public let config: PipelineConfig
+        public let prefillRefiner: PrefillMLXRefiner?
     }
 
     /// Result of background refinement.
@@ -468,7 +487,8 @@ public final class GrembleVoicePipeline {
                 dictText: dictText,
                 context: context,
                 refinerName: refinerName,
-                config: config
+                config: config,
+                prefillRefiner: self.prefillRefiner
             )
         }
 
@@ -498,7 +518,12 @@ public final class GrembleVoicePipeline {
 
         let refineStart = Date()
         do {
-            let refiner = try makeRefinerFromConfig(input.config)
+            let refiner: any TextRefiner
+            if let prefill = input.prefillRefiner {
+                refiner = prefill
+            } else {
+                refiner = try makeRefinerFromConfig(input.config)
+            }
 
             let inputText = input.config.refiner.isCloud
                 ? SensitiveDataFilter.filter(input.dictText).sanitizedText
@@ -506,6 +531,7 @@ public final class GrembleVoicePipeline {
 
             let customPrompt: String?
             if case .ollama(_, _, let prompt) = input.config.refiner { customPrompt = prompt }
+            else if case .mlx(_, let prompt) = input.config.refiner { customPrompt = prompt }
             else { customPrompt = nil }
 
             let rawResult = try await refiner.refine(
@@ -568,7 +594,7 @@ public final class GrembleVoicePipeline {
         case .ollama(let baseURL, let model, _):
             let url = URL(string: baseURL) ?? OllamaRefiner.defaultBaseURL
             return OllamaRefiner(baseURL: url, model: model)
-        case .mlx(let modelID):
+        case .mlx(let modelID, _):
             return MLXRefiner(modelID: modelID)
         case .claude(let apiKey, let model):
             return ClaudeRefiner(apiKey: apiKey, model: model)
@@ -602,7 +628,8 @@ public final class GrembleVoicePipeline {
             let url = URL(string: baseURL) ?? OllamaRefiner.defaultBaseURL
             return OllamaRefiner(baseURL: url, model: model)
 
-        case .mlx(let modelID):
+        case .mlx(let modelID, _):
+            if let prefillRefiner { return prefillRefiner }
             return MLXRefiner(modelID: modelID)
 
         case .claude(let apiKey, let model):

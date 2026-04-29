@@ -65,7 +65,8 @@ public extension PipelineConfig {
                     model: String = "gemma3:4b",
                     customPrompt: String? = nil)
         /// On-device MLX LLM. Default: Gemma 3 4B instruction-tuned, 4-bit quantized.
-        case mlx(modelID: String = "mlx-community/gemma-3-4b-it-4bit")
+        case mlx(modelID: String = "mlx-community/gemma-3-4b-it-4bit",
+                 customPrompt: String? = nil)
         /// Anthropic Claude API (BYOK).
         case claude(apiKey: String, model: String = "claude-3-5-haiku-latest")
         /// OpenAI Chat Completions API (BYOK).
@@ -78,7 +79,7 @@ public extension PipelineConfig {
             switch self {
             case .none:                     return "none"
             case .ollama(_, let model, _):  return "Ollama \(model)"
-            case .mlx(let id):
+            case .mlx(let id, _):
                 // Use the last path component of the HuggingFace model ID.
                 return "MLX \(id.split(separator: "/").last.map(String.init) ?? id)"
             case .claude(_, let model):     return "Claude \(model)"

@@ -220,9 +220,9 @@ public actor PrefillMLXRefiner: TextRefiner {
             removing filler sounds (um, uh), fixing false starts and self-corrections, removing \
             repeated stutters, adding punctuation, and correcting obvious mis-heard words. \
             Keep the speaker's exact words and phrasing. Words like "honestly", "actually", \
-            "basically", "really", "pretty" are intentional and must be kept. Never rephrase, \
-            paraphrase, or substitute different words. Return only the refined text with no \
-            preamble or explanation.
+            "basically", "really", "pretty", "wow", "oh", "yeah", "okay" are intentional and \
+            must be kept. Never rephrase, paraphrase, or substitute different words. Return \
+            only the refined text with no preamble or explanation.
 
             Examples:
             Input: "so I want to no actually I need to lets go with the second approach for the API"
@@ -231,8 +231,8 @@ public actor PrefillMLXRefiner: TextRefiner {
             Input: "um the the thing is we need to like update the cache invalidation logic because its uh its breaking on deploy"
             Output: "The thing is, we need to update the cache invalidation logic because it's breaking on deploy."
 
-            Input: "honestly though it works pretty well I didnt expect it to be this fast"
-            Output: "Honestly though, it works pretty well. I didn't expect it to be this fast."
+            Input: "wow that actually worked I didnt expect it to be this fast"
+            Output: "Wow, that actually worked. I didn't expect it to be this fast."
             """
 
         if let ctx = context, !ctx.isEmpty {

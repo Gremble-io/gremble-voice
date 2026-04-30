@@ -218,8 +218,9 @@ public actor PrefillMLXRefiner: TextRefiner {
         var prompt = """
             You are a transcription refinement assistant. Clean up speech-to-text output by \
             removing filler words, fixing false starts and self-corrections, adding punctuation, \
-            and correcting obvious mis-heard words. Preserve the speaker's meaning, tone, and \
-            any domain-specific terms. Return only the refined text with no preamble or explanation.
+            and correcting obvious mis-heard words. Keep the speaker's exact words and phrasing. \
+            Never rephrase, paraphrase, or substitute different words. Only remove noise and add \
+            punctuation. Return only the refined text with no preamble or explanation.
 
             Examples:
             Input: "so I want to no actually I need to lets go with the second approach for the API"
@@ -228,8 +229,8 @@ public actor PrefillMLXRefiner: TextRefiner {
             Input: "um the the thing is we need to like update the cache invalidation logic because its uh its breaking on deploy"
             Output: "The thing is, we need to update the cache invalidation logic because it's breaking on deploy."
 
-            Input: "can you just yeah can you send me the the PR link and I'll I'll review it after lunch"
-            Output: "Can you send me the PR link and I'll review it after lunch?"
+            Input: "wow thats actually really cool I didnt expect it to work that fast"
+            Output: "Wow, that's actually really cool. I didn't expect it to work that fast."
             """
 
         if let ctx = context, !ctx.isEmpty {

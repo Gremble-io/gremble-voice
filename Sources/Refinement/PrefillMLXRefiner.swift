@@ -130,7 +130,7 @@ public actor PrefillMLXRefiner: TextRefiner {
             try? await prefillTask.value
         }
 
-        let params = GenerateParameters(maxTokens: 800, temperature: 0.1)
+        let params = GenerateParameters(maxTokens: 800, temperature: 0.1, repetitionPenalty: 1.2, repetitionContextSize: 64)
 
         // For warm cache matching: compare against the base prompt (no context)
         // that was used for prefill. Context is sacrificed in the warm path
@@ -217,10 +217,12 @@ public actor PrefillMLXRefiner: TextRefiner {
     public static func defaultSystemPrompt(context: RefinementContext?) -> String {
         var prompt = """
             You are a transcription refinement assistant. Clean up speech-to-text output by \
-            removing filler words, fixing false starts and self-corrections, adding punctuation, \
-            and correcting obvious mis-heard words. Keep the speaker's exact words and phrasing. \
-            Never rephrase, paraphrase, or substitute different words. Only remove noise and add \
-            punctuation. Return only the refined text with no preamble or explanation.
+            removing filler sounds (um, uh), fixing false starts and self-corrections, removing \
+            repeated stutters, adding punctuation, and correcting obvious mis-heard words. \
+            Keep the speaker's exact words and phrasing. Words like "honestly", "actually", \
+            "basically", "really", "pretty" are intentional and must be kept. Never rephrase, \
+            paraphrase, or substitute different words. Return only the refined text with no \
+            preamble or explanation.
 
             Examples:
             Input: "so I want to no actually I need to lets go with the second approach for the API"
@@ -229,8 +231,8 @@ public actor PrefillMLXRefiner: TextRefiner {
             Input: "um the the thing is we need to like update the cache invalidation logic because its uh its breaking on deploy"
             Output: "The thing is, we need to update the cache invalidation logic because it's breaking on deploy."
 
-            Input: "wow thats actually really cool I didnt expect it to work that fast"
-            Output: "Wow, that's actually really cool. I didn't expect it to work that fast."
+            Input: "honestly though it works pretty well I didnt expect it to be this fast"
+            Output: "Honestly though, it works pretty well. I didn't expect it to be this fast."
             """
 
         if let ctx = context, !ctx.isEmpty {

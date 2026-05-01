@@ -130,8 +130,6 @@ public actor PrefillMLXRefiner: TextRefiner {
             try? await prefillTask.value
         }
 
-        let params = GenerateParameters(maxTokens: 800, temperature: 0.1, repetitionPenalty: 1.2, repetitionContextSize: 64)
-
         // For warm cache matching: compare against the base prompt (no context)
         // that was used for prefill. Context is sacrificed in the warm path
         // for latency (it adds ~20 tokens of marginal value for dictation).
@@ -144,13 +142,13 @@ public actor PrefillMLXRefiner: TextRefiner {
                 warmState = nil
                 refined = try await refineWarm(
                     text: text, systemPrompt: warmPrompt,
-                    warm: warm, params: params, container: container)
+                    warm: warm, container: container)
             } else {
                 warmState = nil
                 let coldPrompt = customPrompt ?? Self.defaultSystemPrompt(context: context)
                 refined = try await refineCold(
                     text: text, systemPrompt: coldPrompt,
-                    params: params, container: container)
+                    container: container)
             }
             let result = refined.trimmingCharacters(in: .whitespacesAndNewlines)
             log.debug("Refined \(text.count) chars -> \(result.count) chars (warm=\(useWarm))")
@@ -165,8 +163,7 @@ public actor PrefillMLXRefiner: TextRefiner {
     /// Warm path: use the pre-warmed KV cache, process only the tokens after the cached prefix.
     private func refineWarm(
         text: String, systemPrompt: String,
-        warm: WarmCacheState, params: GenerateParameters,
-        container: ModelContainer
+        warm: WarmCacheState, container: ModelContainer
     ) async throws -> String {
         try await container.perform(nonSendable: warm) { ctx, warm in
             let fullInput = try await ctx.processor.prepare(
@@ -176,15 +173,27 @@ public actor PrefillMLXRefiner: TextRefiner {
             let remainingTokens = fullTokens[warm.prefixTokenCount...]
             let remainingInput = LMInput(tokens: remainingTokens)
 
-            let stream = try generate(
-                input: remainingInput, cache: warm.cache,
-                parameters: params, context: ctx)
+            let vocabProcessor = InputVocabularyProcessor.build(
+                transcript: text, tokenizer: ctx.tokenizer)
+            let transcriptTokenCount = ctx.tokenizer.encode(
+                text: text, addSpecialTokens: false).count
+            let maxTokens = max(transcriptTokenCount + 30,
+                                Int(Double(transcriptTokenCount) * 1.3))
+
+            let iterator = try TokenIterator(
+                input: remainingInput, model: ctx.model, cache: warm.cache,
+                processor: vocabProcessor, sampler: ArgMaxSampler(),
+                maxTokens: maxTokens)
+
+            let (stream, _) = generateTask(
+                promptTokenCount: remainingInput.text.tokens.size,
+                modelConfiguration: ctx.configuration,
+                tokenizer: ctx.tokenizer,
+                iterator: iterator)
 
             var output = ""
             for await generation in stream {
-                if case .chunk(let chunk) = generation {
-                    output += chunk
-                }
+                if case .chunk(let chunk) = generation { output += chunk }
             }
             return output
         }
@@ -193,7 +202,7 @@ public actor PrefillMLXRefiner: TextRefiner {
     /// Cold path: full tokenization, no cache reuse.
     private func refineCold(
         text: String, systemPrompt: String,
-        params: GenerateParameters, container: ModelContainer
+        container: ModelContainer
     ) async throws -> String {
         try await container.perform { ctx in
             let messages: [Chat.Message] = [
@@ -202,13 +211,28 @@ public actor PrefillMLXRefiner: TextRefiner {
             ]
             let lmInput = try await ctx.processor.prepare(
                 input: UserInput(chat: messages))
-            let stream = try generate(
-                input: lmInput, parameters: params, context: ctx)
+
+            let vocabProcessor = InputVocabularyProcessor.build(
+                transcript: text, tokenizer: ctx.tokenizer)
+            let transcriptTokenCount = ctx.tokenizer.encode(
+                text: text, addSpecialTokens: false).count
+            let maxTokens = max(transcriptTokenCount + 30,
+                                Int(Double(transcriptTokenCount) * 1.3))
+
+            let iterator = try TokenIterator(
+                input: lmInput, model: ctx.model,
+                processor: vocabProcessor, sampler: ArgMaxSampler(),
+                maxTokens: maxTokens)
+
+            let (stream, _) = generateTask(
+                promptTokenCount: lmInput.text.tokens.size,
+                modelConfiguration: ctx.configuration,
+                tokenizer: ctx.tokenizer,
+                iterator: iterator)
+
             var output = ""
             for await generation in stream {
-                if case .chunk(let chunk) = generation {
-                    output += chunk
-                }
+                if case .chunk(let chunk) = generation { output += chunk }
             }
             return output
         }
@@ -216,39 +240,16 @@ public actor PrefillMLXRefiner: TextRefiner {
 
     public static func defaultSystemPrompt(context: RefinementContext?) -> String {
         var prompt = """
-            You are a transcript formatter. Your job is to add punctuation and \
-            capitalization to raw speech-to-text output. You may also make these \
-            specific edits:
+            You are a transcript formatter. Add punctuation and capitalization \
+            to raw speech-to-text output.
 
+            Also:
             1. Remove filled pauses: um, uh, er, hmm
             2. Collapse stuttered repetitions: "the the" becomes "the"
-            3. When the speaker corrects themselves, remove the abandoned part \
-            and keep the correction: "I want to, no, I need to" becomes "I need to"
-            4. Remove filler "like" only when it has no grammatical role: \
-            "we need to like update" becomes "we need to update"
 
             Rules:
-            - Your output must use ONLY words the speaker said. Never add, \
-            substitute, or rephrase.
-            - Keep all discourse markers: honestly, actually, basically, really, \
-            pretty, wow, oh, yeah, well, okay, so
-            - Keep the speaker's tone and style. Casual speech stays casual.
-            - Output the formatted text only. No explanations, labels, or commentary.
-
-            Examples:
-            Input: "um so I want to no actually I need to lets go with the second approach for the API"
-            Output: "I need to, let's go with the second approach for the API."
-
-            Input: "the the thing is we need to like update the cache invalidation logic because its uh its breaking on deploy"
-            Output: "The thing is, we need to update the cache invalidation logic because it's breaking on deploy."
-
-            Input: "honestly though it works pretty well I didnt expect it to be this fast"
-            Output: "Honestly though, it works pretty well. I didn't expect it to be this fast."
-
-            Input: "wow thats actually really cool I cant believe it handled that"
-            Output: "Wow, that's actually really cool. I can't believe it handled that."
-            WRONG: "That's impressive. I can't believe it handled that."
-            This is wrong because it rephrased the speaker's words and dropped "wow".
+            - Use ONLY words the speaker said. Never add, substitute, or rephrase.
+            - Output the formatted text only. No explanations.
             """
 
         if let ctx = context, !ctx.isEmpty {

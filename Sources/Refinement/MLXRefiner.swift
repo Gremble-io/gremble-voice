@@ -78,7 +78,6 @@ public actor MLXRefiner: TextRefiner {
         }
 
         let systemPrompt = customPrompt ?? buildSystemPrompt(context: context)
-        let params = GenerateParameters(maxTokens: 800, temperature: 0.1)
 
         do {
             let refined = try await container.perform { ctx in
@@ -88,13 +87,28 @@ public actor MLXRefiner: TextRefiner {
                 ]
                 let lmInput = try await ctx.processor.prepare(
                     input: UserInput(chat: messages))
-                let stream = try generate(
-                    input: lmInput, parameters: params, context: ctx)
+
+                let vocabProcessor = InputVocabularyProcessor.build(
+                    transcript: text, tokenizer: ctx.tokenizer)
+                let transcriptTokenCount = ctx.tokenizer.encode(
+                    text: text, addSpecialTokens: false).count
+                let maxTokens = max(transcriptTokenCount + 30,
+                                    Int(Double(transcriptTokenCount) * 1.3))
+
+                let iterator = try TokenIterator(
+                    input: lmInput, model: ctx.model,
+                    processor: vocabProcessor, sampler: ArgMaxSampler(),
+                    maxTokens: maxTokens)
+
+                let (stream, _) = generateTask(
+                    promptTokenCount: lmInput.text.tokens.size,
+                    modelConfiguration: ctx.configuration,
+                    tokenizer: ctx.tokenizer,
+                    iterator: iterator)
+
                 var output = ""
                 for await generation in stream {
-                    if case .chunk(let chunk) = generation {
-                        output += chunk
-                    }
+                    if case .chunk(let chunk) = generation { output += chunk }
                 }
                 return output
             }

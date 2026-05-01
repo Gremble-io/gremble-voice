@@ -1,6 +1,6 @@
+import Foundation
 import MLX
 import MLXLMCommon
-import os
 
 /// Restricts LLM output to only tokens present in the input transcript plus punctuation.
 /// Prevents hallucination by construction: the model cannot generate words it wasn't given.
@@ -9,15 +9,14 @@ final class InputVocabularyProcessor: LogitProcessor {
     private let allowedTokenIDs: Set<Int>
     private var mask: MLXArray?
     private var callCount = 0
-    private let log = Logger(subsystem: "io.gremble.gremblevoice", category: "VocabProcessor")
 
     init(allowedTokenIDs: Set<Int>) {
         self.allowedTokenIDs = allowedTokenIDs
-        log.info("VocabProcessor created with \(allowedTokenIDs.count) allowed tokens")
+        Self.debugLog("INIT: \(allowedTokenIDs.count) allowed tokens, ids=\(Array(allowedTokenIDs.prefix(20)))")
     }
 
     func prompt(_ prompt: MLXArray) {
-        log.debug("VocabProcessor.prompt() called, prompt shape: \(prompt.shape.description)")
+        Self.debugLog("PROMPT called, shape=\(prompt.shape.description)")
     }
 
     func process(logits: MLXArray) -> MLXArray {
@@ -29,21 +28,35 @@ final class InputVocabularyProcessor: LogitProcessor {
                 values[id] = 0
             }
             mask = MLXArray(values).reshaped(1, vocabSize)
-            let infCount = vocabSize - allowedTokenIDs.count
-            log.info("Mask built: vocabSize=\(vocabSize), allowed=\(self.allowedTokenIDs.count), masked=\(infCount), logits shape=\(logits.shape.description)")
+            Self.debugLog("MASK BUILT: vocabSize=\(vocabSize), allowed=\(allowedTokenIDs.count), logits.shape=\(logits.shape.description)")
         }
         let result = logits + mask!
-        if callCount <= 3 {
-            log.debug("process() call #\(self.callCount), logits shape=\(logits.shape.description), result shape=\(result.shape.description)")
+        if callCount <= 5 {
+            Self.debugLog("PROCESS #\(callCount): logits.shape=\(logits.shape.description), result.shape=\(result.shape.description)")
         }
         return result
     }
 
     func didSample(token: MLXArray) {
-        if callCount <= 5 {
+        if callCount <= 10 {
             let tokenId = token.item(Int.self)
             let isAllowed = allowedTokenIDs.contains(tokenId)
-            log.debug("Sampled token \(tokenId), allowed=\(isAllowed)")
+            Self.debugLog("SAMPLED token=\(tokenId) allowed=\(isAllowed)")
+        }
+    }
+
+    private static func debugLog(_ message: String) {
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Logs/Tome/vocab_debug.log")
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            handle.closeFile()
+        } else {
+            try? line.data(using: .utf8)?.write(to: url)
         }
     }
 

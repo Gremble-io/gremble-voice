@@ -1,5 +1,6 @@
 import MLX
 import MLXLMCommon
+import os
 
 /// Restricts LLM output to only tokens present in the input transcript plus punctuation.
 /// Prevents hallucination by construction: the model cannot generate words it wasn't given.
@@ -7,14 +8,20 @@ final class InputVocabularyProcessor: LogitProcessor {
 
     private let allowedTokenIDs: Set<Int>
     private var mask: MLXArray?
+    private var callCount = 0
+    private let log = Logger(subsystem: "io.gremble.gremblevoice", category: "VocabProcessor")
 
     init(allowedTokenIDs: Set<Int>) {
         self.allowedTokenIDs = allowedTokenIDs
+        log.info("VocabProcessor created with \(allowedTokenIDs.count) allowed tokens")
     }
 
-    func prompt(_ prompt: MLXArray) {}
+    func prompt(_ prompt: MLXArray) {
+        log.debug("VocabProcessor.prompt() called, prompt shape: \(prompt.shape.description)")
+    }
 
     func process(logits: MLXArray) -> MLXArray {
+        callCount += 1
         if mask == nil {
             let vocabSize = logits.dim(-1)
             var values = [Float](repeating: -Float.infinity, count: vocabSize)
@@ -22,11 +29,23 @@ final class InputVocabularyProcessor: LogitProcessor {
                 values[id] = 0
             }
             mask = MLXArray(values).reshaped(1, vocabSize)
+            let infCount = vocabSize - allowedTokenIDs.count
+            log.info("Mask built: vocabSize=\(vocabSize), allowed=\(self.allowedTokenIDs.count), masked=\(infCount), logits shape=\(logits.shape.description)")
         }
-        return logits + mask!
+        let result = logits + mask!
+        if callCount <= 3 {
+            log.debug("process() call #\(self.callCount), logits shape=\(logits.shape.description), result shape=\(result.shape.description)")
+        }
+        return result
     }
 
-    func didSample(token: MLXArray) {}
+    func didSample(token: MLXArray) {
+        if callCount <= 5 {
+            let tokenId = token.item(Int.self)
+            let isAllowed = allowedTokenIDs.contains(tokenId)
+            log.debug("Sampled token \(tokenId), allowed=\(isAllowed)")
+        }
+    }
 
     static func build(transcript: String, tokenizer: Tokenizer) -> InputVocabularyProcessor {
         var allowed = Set<Int>()

@@ -41,13 +41,19 @@ final class InputVocabularyProcessor: LogitProcessor {
             allowed.formUnion(tokenizer.encode(text: " " + cap, addSpecialTokens: false))
         }
 
-        let alwaysAllowed = [
-            ".", ",", "!", "?", ";", ":", "-", "'", "\"", "\n", " ",
-            "'s", "'t", "'re", "'ve", "'ll", "'d", "'m", "n't",
-            " .", " ,", " !", " ?",
-        ]
-        for s in alwaysAllowed {
-            allowed.formUnion(tokenizer.encode(text: s, addSpecialTokens: false))
+        // Single-character punctuation: safe to encode (no sub-token leakage).
+        let punctuation = [".", ",", "!", "?", ";", ":", "-", "'", "\u{2019}", "\"", "\n", " "]
+        for p in punctuation {
+            allowed.formUnion(tokenizer.encode(text: p, addSpecialTokens: false))
+        }
+
+        // Multi-character contractions: use convertTokenToId to avoid splitting
+        // "'re" into ["'", "re"] which leaks "re" as a building block for new words.
+        let contractions = ["'s", "'t", "'re", "'ve", "'ll", "'d", "'m", "n't",
+                            "\u{2019}s", "\u{2019}t", "\u{2019}re", "\u{2019}ve",
+                            "\u{2019}ll", "\u{2019}d", "\u{2019}m"]
+        for c in contractions {
+            if let id = tokenizer.convertTokenToId(c) { allowed.insert(id) }
         }
         if let eos = tokenizer.eosTokenId { allowed.insert(eos) }
 

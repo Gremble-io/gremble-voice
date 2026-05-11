@@ -50,6 +50,13 @@ public enum RefinementValidator {
             return .fallback(reason: "length anomaly (\(result.count) > \(lengthLimit))")
         }
 
+        // Question-form preservation: if the input starts with an auxiliary/question
+        // word, the output must preserve that word at the start (capitalized).
+        // Catches the 3B model's tendency to invert subject-verb order in questions.
+        if let guard_ = questionFormCheck(result: result, original: original) {
+            return guard_
+        }
+
         // Word overlap — only for inputs with > 5 content words
         let originalContent = normalizedWordSet(original, excludeFillers: true)
         if originalContent.count > 5 {
@@ -70,6 +77,52 @@ public enum RefinementValidator {
     }
 
     // MARK: - Helpers
+
+    /// Auxiliary and interrogative words that start questions in conversational speech.
+    private static let questionStartWords: Set<String> = [
+        "did", "do", "does", "can", "could", "would", "should", "will",
+        "have", "has", "is", "are", "were", "was", "what", "when",
+        "where", "who", "why", "how",
+    ]
+
+    /// Check whether a question-phrased input had its question form mangled.
+    private static func questionFormCheck(result: String, original: String) -> ValidationResult? {
+        let origWords = original.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !fillerWords.contains($0) }
+        guard let firstWord = origWords.first,
+              questionStartWords.contains(firstWord) else { return nil }
+
+        let resultFirstWord = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ")
+            .first
+            .map { String($0).lowercased() } ?? ""
+
+        if resultFirstWord != firstWord {
+            log.warning("Validation: fallback question_reordered original_start=\"\(firstWord)\" result_start=\"\(resultFirstWord)\"")
+            return .fallback(reason: "question reordered (\(firstWord)... → \(resultFirstWord)...)")
+        }
+        return nil
+    }
+
+    /// Minimal rule-based fixup for question inputs that failed refinement.
+    /// Capitalizes the first letter and appends "?" if missing.
+    public static func fixUpQuestion(_ text: String) -> String {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return t }
+        let first = t.removeFirst()
+        t = String(first).uppercased() + t
+        if !t.hasSuffix("?") {
+            if t.hasSuffix(".") || t.hasSuffix(",") {
+                t = String(t.dropLast()) + "?"
+            } else {
+                t += "?"
+            }
+        }
+        return t
+    }
 
     /// Normalize text to a set of lowercase content words.
     public static func normalizedWordSet(_ text: String, excludeFillers: Bool) -> Set<String> {

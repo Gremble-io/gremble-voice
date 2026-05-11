@@ -335,7 +335,9 @@ public final class GrembleVoicePipeline {
                     )
 
                 case .fallback(let reason):
-                    refinedText = dictText
+                    refinedText = reason.hasPrefix("question reordered")
+                        ? RefinementValidator.fixUpQuestion(dictText)
+                        : dictText
                     isRefinementFallback = true
                     fallbackReason = reason
                     log.record(
@@ -576,9 +578,12 @@ public final class GrembleVoicePipeline {
                     events: log.finish()
                 )
             case .fallback(let reason):
+                let fallbackText = reason.hasPrefix("question reordered")
+                    ? RefinementValidator.fixUpQuestion(input.dictText)
+                    : input.dictText
                 log.record(stage: .refineFallback, message: "duration=\(refineMs)ms reason=\(reason)")
                 return RefinementResult(
-                    refinedText: input.dictText,
+                    refinedText: fallbackText,
                     isRefinementFallback: true,
                     fallbackReason: reason,
                     events: log.finish()

@@ -50,6 +50,12 @@ public enum RefinementValidator {
             return .fallback(reason: "length anomaly (\(result.count) > \(lengthLimit))")
         }
 
+        // Repetition loop detection: if any 2-word phrase appears 3+ times,
+        // the model is stuck in a degenerate loop.
+        if let guard_ = repetitionCheck(result: result) {
+            return guard_
+        }
+
         // Question-form preservation: if the input starts with an auxiliary/question
         // word, the output must preserve that word at the start (capitalized).
         // Catches the 3B model's tendency to invert subject-verb order in questions.
@@ -77,6 +83,28 @@ public enum RefinementValidator {
     }
 
     // MARK: - Helpers
+
+    /// Detect degenerate repetition loops (e.g. "the first two, the first two, the first two").
+    private static func repetitionCheck(result: String) -> ValidationResult? {
+        let words = result.lowercased()
+            .split(separator: " ")
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { !$0.isEmpty }
+        guard words.count >= 6 else { return nil }
+
+        for n in 2...min(4, words.count / 3) {
+            var counts: [String: Int] = [:]
+            for i in 0...(words.count - n) {
+                let gram = words[i..<(i + n)].joined(separator: " ")
+                counts[gram, default: 0] += 1
+                if counts[gram]! >= 3 {
+                    log.warning("Validation: fallback repetition_loop gram=\"\(gram)\" count=\(counts[gram]!)")
+                    return .fallback(reason: "repetition loop (\(gram) ×\(counts[gram]!))")
+                }
+            }
+        }
+        return nil
+    }
 
     /// Auxiliary and interrogative words that start questions in conversational speech.
     private static let questionStartWords: Set<String> = [

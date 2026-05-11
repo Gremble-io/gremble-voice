@@ -136,24 +136,29 @@ public actor PrefillMLXRefiner: TextRefiner {
         let expectedPrefill = customPrompt ?? Self.defaultSystemPrompt(context: nil)
         let useWarm = warmState != nil && prefillPrompt == expectedPrefill
 
+        log.info("Refine start: path=\(useWarm ? "warm" : "cold") input=\(text.count)chars context=\(context?.isEmpty == false)")
+
         do {
             let refined: String
             if useWarm, let warm = warmState, let warmPrompt = prefillPrompt {
                 warmState = nil
+                log.info("Warm path: prompt=\(warmPrompt.count)chars prefixTokens=\(warm.prefixTokenCount)")
                 refined = try await refineWarm(
                     text: text, systemPrompt: warmPrompt,
                     warm: warm, container: container)
             } else {
                 warmState = nil
                 let coldPrompt = customPrompt ?? Self.defaultSystemPrompt(context: context)
+                log.info("Cold path: prompt=\(coldPrompt.count)chars")
                 refined = try await refineCold(
                     text: text, systemPrompt: coldPrompt,
                     container: container)
             }
             let result = refined.trimmingCharacters(in: .whitespacesAndNewlines)
-            log.debug("Refined \(text.count) chars -> \(result.count) chars (warm=\(useWarm))")
+            log.info("Refine done: \(text.count)→\(result.count)chars raw_output=\"\(String(refined.prefix(120)))\"")
             return result
         } catch {
+            log.error("Refine failed: \(error.localizedDescription)")
             throw TextRefinerError.refinementFailed(error.localizedDescription)
         }
     }

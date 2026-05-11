@@ -309,6 +309,13 @@ public final class GrembleVoicePipeline {
                 let stripped = PreambleStripper.strip(rawResult)
                 let refineMs = Int(Date().timeIntervalSince(refineStart) * 1000)
 
+                PipelineLogger.llm.info(
+                    "Refine raw output (\(refineMs)ms): \"\(String(rawResult.prefix(200)))\""
+                )
+                if stripped != rawResult.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    PipelineLogger.llm.info("Preamble stripped: \"\(String(stripped.prefix(200)))\"")
+                }
+
                 // Validate result
                 let validation = RefinementValidator.validate(
                     result: stripped,

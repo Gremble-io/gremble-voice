@@ -78,6 +78,7 @@ public actor MLXRefiner: TextRefiner {
         }
 
         let systemPrompt = customPrompt ?? buildSystemPrompt(context: context)
+        log.info("Refine start: input=\(text.count)chars prompt=\(systemPrompt.count)chars context=\(context?.isEmpty == false)")
 
         do {
             let refined = try await container.perform { ctx in
@@ -113,9 +114,10 @@ public actor MLXRefiner: TextRefiner {
                 return output
             }
             let result = refined.trimmingCharacters(in: .whitespacesAndNewlines)
-            log.debug("Refined \(text.count) chars → \(result.count) chars")
+            log.info("Refine done: \(text.count)→\(result.count)chars raw_output=\"\(String(refined.prefix(120)))\"")
             return result
         } catch {
+            log.error("Refine failed: \(error.localizedDescription)")
             throw TextRefinerError.refinementFailed(error.localizedDescription)
         }
     }

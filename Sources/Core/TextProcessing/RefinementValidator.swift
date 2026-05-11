@@ -1,10 +1,13 @@
 import Foundation
+import os
 
 /// Validates LLM refinement output before replacing the original transcription.
 ///
 /// Guards against runaway length, hallucinated content, and filler-word-only inputs
 /// that aren't worth sending to the refiner.
 public enum RefinementValidator {
+
+    private static let log = Logger(subsystem: "io.gremble.gremblevoice", category: "RefinementValidator")
 
     /// Filler words excluded when counting "content" words for overlap checks.
     public static let fillerWords: Set<String> = [
@@ -34,11 +37,16 @@ public enum RefinementValidator {
         original: String,
         isStructuredContext: Bool = false
     ) -> ValidationResult {
-        guard !result.isEmpty else { return .fallback(reason: "empty result") }
+        guard !result.isEmpty else {
+            log.info("Validation: fallback (empty result)")
+            return .fallback(reason: "empty result")
+        }
 
         // Length check
         let lengthLimit = original.count * (isStructuredContext ? 3 : 2) + 100
+        let lengthRatio = Double(result.count) / Double(max(original.count, 1))
         if result.count > lengthLimit {
+            log.warning("Validation: fallback length_anomaly result=\(result.count) limit=\(lengthLimit) ratio=\(String(format: "%.1f", lengthRatio))x")
             return .fallback(reason: "length anomaly (\(result.count) > \(lengthLimit))")
         }
 
@@ -46,11 +54,16 @@ public enum RefinementValidator {
         let originalContent = normalizedWordSet(original, excludeFillers: true)
         if originalContent.count > 5 {
             let resultWords = normalizedWordSet(result, excludeFillers: false)
-            let overlap = Double(originalContent.intersection(resultWords).count)
-                        / Double(originalContent.count)
+            let shared = originalContent.intersection(resultWords)
+            let overlap = Double(shared.count) / Double(originalContent.count)
             if overlap < 0.5 {
+                let missing = originalContent.subtracting(resultWords)
+                log.warning("Validation: fallback overlap=\(Int(overlap * 100))% missing=\(Array(missing.prefix(5)))")
                 return .fallback(reason: "word overlap too low (\(Int(overlap * 100))%)")
             }
+            log.info("Validation: accept length_ratio=\(String(format: "%.1f", lengthRatio))x overlap=\(Int(overlap * 100))% content_words=\(originalContent.count)")
+        } else {
+            log.info("Validation: accept (short input, \(originalContent.count) content words) length_ratio=\(String(format: "%.1f", lengthRatio))x")
         }
 
         return .accept

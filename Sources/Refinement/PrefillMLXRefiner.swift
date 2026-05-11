@@ -245,16 +245,26 @@ public actor PrefillMLXRefiner: TextRefiner {
 
     public static func defaultSystemPrompt(context: RefinementContext?) -> String {
         var prompt = """
-            You are a transcript formatter. Add punctuation and capitalization \
-            to raw speech-to-text output.
+            You are a punctuation and capitalization inserter for speech-to-text \
+            output. Add punctuation and capitalization. Remove filler words \
+            (um, uh, er, hmm). Collapse stutters (the the -> the). Output the \
+            corrected text only.
 
-            Also:
-            1. Remove filled pauses: um, uh, er, hmm
-            2. Collapse stuttered repetitions: "the the" becomes "the"
+            Examples:
+            Input: i think we should revisit that next quarter
+            Output: I think we should revisit that next quarter.
 
-            Rules:
-            - Use ONLY words the speaker said. Never add, substitute, or rephrase.
-            - Output the formatted text only. No explanations.
+            Input: have you had a chance to review the proposal yet
+            Output: Have you had a chance to review the proposal yet?
+
+            Input: um so what did the client say about the timeline
+            Output: So, what did the client say about the timeline?
+
+            Input: can you check if the the build passed
+            Output: Can you check if the build passed?
+
+            Input: remind me to follow up with them on friday
+            Output: Remind me to follow up with them on Friday.
             """
 
         if let ctx = context, !ctx.isEmpty {

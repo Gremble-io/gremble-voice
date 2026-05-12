@@ -11,10 +11,10 @@ import Tokenizers
 /// no extra package is required.
 struct HubApiDownloader: MLXLMCommon.Downloader {
 
-    private let api: HubApi
+    private let token: String?
 
     init(token: String? = nil) {
-        api = token.map { HubApi(hfToken: $0) } ?? HubApi.shared
+        self.token = token
     }
 
     func download(
@@ -24,8 +24,15 @@ struct HubApiDownloader: MLXLMCommon.Downloader {
         useLatest: Bool,
         progressHandler: @Sendable @escaping (Progress) -> Void
     ) async throws -> URL {
-        try await api.snapshot(
-            from: id,
+        let repo = Hub.Repo(id: id)
+        let onlineApi = token.map { HubApi(hfToken: $0) } ?? HubApi.shared
+        let localPath = onlineApi.localRepoLocation(repo)
+        let cached = FileManager.default.fileExists(atPath: localPath.path)
+
+        let api = cached ? HubApi(hfToken: token, useOfflineMode: true) : onlineApi
+
+        return try await api.snapshot(
+            from: repo,
             revision: revision ?? "main",
             matching: patterns.isEmpty ? ["*"] : patterns,
             progressHandler: progressHandler

@@ -33,9 +33,11 @@ public actor DiarizationEngine {
     // MARK: - Private state
 
     // nonisolated(unsafe): OfflineDiarizerManager is a non-Sendable final class.
-    // Access is serialised through the DiarizationEngine actor, so this is safe.
+    // Mutation (prepareModels) is serialised through the actor. Read-only process
+    // calls are nonisolated since concurrent diarization on the same instance is
+    // not a supported use case.
     private nonisolated(unsafe) var manager: OfflineDiarizerManager?
-    private let log = Logger(subsystem: "io.gremble.gremblevoice", category: "DiarizationEngine")
+    private nonisolated let log = Logger(subsystem: "io.gremble.gremblevoice", category: "DiarizationEngine")
 
     public init() {}
 
@@ -60,7 +62,7 @@ public actor DiarizationEngine {
     /// - Parameter audioURL: Path to any audio file readable by `AVAudioFile`.
     ///   The diarizer handles resampling internally.
     /// - Returns: Chronologically ordered speaker segments.
-    public func process(audioURL: URL) async throws -> [Segment] {
+    public nonisolated func process(audioURL: URL) async throws -> [Segment] {
         guard let m = manager else {
             throw DiarizationError.modelsNotPrepared
         }
@@ -83,7 +85,7 @@ public actor DiarizationEngine {
     /// Run offline speaker diarization directly on audio samples.
     ///
     /// - Parameter samples: 16kHz mono Float32 audio.
-    public func process(samples: [Float]) async throws -> [Segment] {
+    public nonisolated func process(samples: [Float]) async throws -> [Segment] {
         guard let m = manager else {
             throw DiarizationError.modelsNotPrepared
         }

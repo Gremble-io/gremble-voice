@@ -19,7 +19,7 @@ public actor WhisperEngine: ASREngine {
 
     private let modelManager: WhisperModelManager
     private let variant: String
-    private let log = Logger(subsystem: "io.gremble.gremblevoice", category: "WhisperEngine")
+    private nonisolated let log = Logger(subsystem: "io.gremble.gremblevoice", category: "WhisperEngine")
 
     // MARK: - Init
 
@@ -54,8 +54,8 @@ public actor WhisperEngine: ASREngine {
 
     // MARK: - Transcription
 
-    public func transcribe(audioURL: URL) async throws -> GrembleVoiceCore.TranscriptionResult {
-        guard let wk = await modelManager.whisperKit else {
+    public nonisolated func transcribe(audioURL: URL) async throws -> GrembleVoiceCore.TranscriptionResult {
+        guard let wk = modelManager.whisperKit else {
             throw ASREngineError.modelNotLoaded
         }
 
@@ -70,8 +70,8 @@ public actor WhisperEngine: ASREngine {
         return GrembleVoiceCore.TranscriptionResult(text: text, processingTime: elapsed)
     }
 
-    public func transcribe(samples: [Float]) async throws -> GrembleVoiceCore.TranscriptionResult {
-        guard let wk = await modelManager.whisperKit else {
+    public nonisolated func transcribe(samples: [Float]) async throws -> GrembleVoiceCore.TranscriptionResult {
+        guard let wk = modelManager.whisperKit else {
             throw ASREngineError.modelNotLoaded
         }
 
@@ -89,7 +89,7 @@ public actor WhisperEngine: ASREngine {
     // MARK: - Helpers
 
     /// Greedy decoding options. Callers can build on top of these for language forcing etc.
-    private func baseDecodingOptions(multilingual: Bool) -> DecodingOptions {
+    nonisolated private func baseDecodingOptions(multilingual: Bool) -> DecodingOptions {
         var opts = DecodingOptions()
         opts.temperature = 0
         opts.temperatureFallbackCount = 0

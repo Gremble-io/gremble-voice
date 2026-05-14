@@ -12,7 +12,8 @@ public actor WhisperModelManager {
     // MARK: - State
 
     // nonisolated(unsafe): WhisperKit is a non-Sendable open class.
-    // Access is serialised through the WhisperModelManager actor, so this is safe.
+    // Mutation (loadModel/unloadModel) is serialised through the actor.
+    // Nonisolated read access from transcribe callers is safe.
     nonisolated(unsafe) private(set) var whisperKit: WhisperKit?
     private(set) var isMultilingual = false
     private var isLoading = false

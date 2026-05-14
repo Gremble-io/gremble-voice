@@ -28,7 +28,7 @@ public actor WhisperStreamingEngine: StreamingASREngine {
     private var _textUpdates: AsyncStream<StreamingTextUpdate>?
     private var continuation: AsyncStream<StreamingTextUpdate>.Continuation?
 
-    private let log = Logger(subsystem: "io.gremble.gremblevoice", category: "WhisperStreamingEngine")
+    private nonisolated let log = Logger(subsystem: "io.gremble.gremblevoice", category: "WhisperStreamingEngine")
 
     // MARK: - Init
 
@@ -59,8 +59,8 @@ public actor WhisperStreamingEngine: StreamingASREngine {
 
     // MARK: - Batch transcription (required by ASREngine)
 
-    public func transcribe(samples: [Float]) async throws -> GrembleVoiceCore.TranscriptionResult {
-        guard let wk = await modelManager.whisperKit else {
+    public nonisolated func transcribe(samples: [Float]) async throws -> GrembleVoiceCore.TranscriptionResult {
+        guard let wk = modelManager.whisperKit else {
             throw ASREngineError.modelNotLoaded
         }
         let start = Date()
@@ -71,8 +71,8 @@ public actor WhisperStreamingEngine: StreamingASREngine {
         return GrembleVoiceCore.TranscriptionResult(text: text, processingTime: elapsed)
     }
 
-    public func transcribe(audioURL: URL) async throws -> GrembleVoiceCore.TranscriptionResult {
-        guard let wk = await modelManager.whisperKit else {
+    public nonisolated func transcribe(audioURL: URL) async throws -> GrembleVoiceCore.TranscriptionResult {
+        guard let wk = modelManager.whisperKit else {
             throw ASREngineError.modelNotLoaded
         }
         let start = Date()
@@ -118,13 +118,12 @@ public actor WhisperStreamingEngine: StreamingASREngine {
                     ? Array(allSamples.suffix(capturedConfig.maxBufferSamples))
                     : allSamples
 
-                guard let wk = await capturedManager.whisperKit else { continue }
+                guard capturedManager.whisperKit != nil else { continue }
                 let multilingual = await capturedManager.isMultilingual
 
                 do {
-                    let opts = streamingDecodingOptions(multilingual: multilingual)
-                    let results = try await wk.transcribe(audioArray: samples, decodeOptions: opts)
-                    let current = joinSegments(results.compactMap(\.text))
+                    let opts = self.streamingDecodingOptions(multilingual: multilingual)
+                    let current = try await self.whisperTranscribe(audioArray: samples, options: opts)
                     guard !current.isEmpty else { continue }
 
                     let (confirmed, unconfirmed) = WordDiff.diff(previous: previousText, current: current)
@@ -155,13 +154,12 @@ public actor WhisperStreamingEngine: StreamingASREngine {
     public func stopStreaming() async throws -> String {
         // Final pass on any remaining buffer
         var finalText = ""
-        if let wk = await modelManager.whisperKit,
+        if modelManager.whisperKit != nil,
            let buffer = audioBuffer {
             let remaining = await buffer.consume()
             if remaining.count >= 1600 {
                 let opts = streamingDecodingOptions(multilingual: await modelManager.isMultilingual)
-                let results = try? await wk.transcribe(audioArray: remaining, decodeOptions: opts)
-                finalText = joinSegments((results ?? []).compactMap(\.text))
+                finalText = (try? await whisperTranscribe(audioArray: remaining, options: opts)) ?? ""
             }
         }
 
@@ -171,6 +169,15 @@ public actor WhisperStreamingEngine: StreamingASREngine {
     }
 
     // MARK: - Private
+
+    nonisolated private func whisperTranscribe(
+        audioArray samples: [Float],
+        options: DecodingOptions
+    ) async throws -> String {
+        guard let wk = modelManager.whisperKit else { return "" }
+        let results = try await wk.transcribe(audioArray: samples, decodeOptions: options)
+        return joinSegments(results.compactMap(\.text))
+    }
 
     private func stopStreamingInternal() async {
         streamingTask?.cancel()
@@ -184,7 +191,7 @@ public actor WhisperStreamingEngine: StreamingASREngine {
         audioBuffer = nil
     }
 
-    private func streamingDecodingOptions(multilingual: Bool) -> DecodingOptions {
+    nonisolated private func streamingDecodingOptions(multilingual: Bool) -> DecodingOptions {
         var opts = DecodingOptions()
         opts.temperature = 0
         opts.temperatureFallbackCount = 0

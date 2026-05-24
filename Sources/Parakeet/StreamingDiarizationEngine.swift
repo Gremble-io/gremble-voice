@@ -3,7 +3,7 @@ import Foundation
 import GrembleVoiceCore
 import os
 
-/// Real-time streaming speaker diarization backed by FluidAudio's Sortformer model.
+/// Real-time streaming speaker diarization backed by FluidAudio's LS-EEND model.
 ///
 /// Runs independently alongside `ParakeetStreamingEngine`. The host app feeds
 /// the same audio samples to both and cross-references word timings with
@@ -30,13 +30,10 @@ public actor StreamingDiarizationEngine {
 
     // MARK: - Configuration
 
-    /// Quality/latency preset for the Sortformer model.
+    /// Quality/latency preset controlling timeline post-processing thresholds.
     public enum Preset: Sendable {
-        /// Fastest inference, ~1.04s latency. May sacrifice accuracy with many speakers.
         case fast
-        /// Best DER (20.57% on AMI SDM), ~1.04s latency. Default for meetings.
         case balanced
-        /// Maximum context window, ~30.4s latency. Highest accuracy but impractical for real-time UI.
         case highContext
     }
 
@@ -65,11 +62,11 @@ public actor StreamingDiarizationEngine {
     // MARK: - Private state
 
     private let preset: Preset
-    private let sortformerConfig: SortformerConfig
+    private let variant: LSEENDVariant
 
-    // nonisolated(unsafe): SortformerDiarizer is a non-Sendable final class.
+    // nonisolated(unsafe): LSEENDDiarizer is a non-Sendable final class.
     // Access is serialised through this actor, so this is safe.
-    private nonisolated(unsafe) var diarizer: SortformerDiarizer?
+    private nonisolated(unsafe) var diarizer: LSEENDDiarizer?
 
     private var processingTask: Task<Void, Never>?
     private var _updates: AsyncStream<StreamingDiarizationUpdate>?
@@ -82,9 +79,9 @@ public actor StreamingDiarizationEngine {
 
     // MARK: - Init
 
-    public init(preset: Preset = .balanced) {
+    public init(preset: Preset = .balanced, variant: LSEENDVariant = .dihard3) {
         self.preset = preset
-        self.sortformerConfig = Self.configForPreset(preset)
+        self.variant = variant
     }
 
     // MARK: - Public API
@@ -92,47 +89,30 @@ public actor StreamingDiarizationEngine {
     /// Whether models have been downloaded and the diarizer is ready.
     public var isReady: Bool { diarizer?.isAvailable ?? false }
 
-    /// Download (if needed) and prepare the Sortformer CoreML model.
-    ///
-    /// Progress is reported 0.0 → 1.0 via `progressHandler`. The handler may be called
-    /// from any thread — dispatch to the main actor if you need to update UI.
+    /// Download (if needed) and prepare the LS-EEND CoreML model.
     public func prepareModels(
         progressHandler: (@Sendable (Double) -> Void)? = nil
     ) async throws {
         guard diarizer == nil else { return }
 
-        log.info("Preparing Sortformer models (preset: \(String(describing: self.preset)))")
+        log.info("Preparing LS-EEND models (variant: \(String(describing: self.variant)), preset: \(String(describing: self.preset)))")
         progressHandler?(0.05)
 
-        let timelineConfig = DiarizerTimelineConfig(
-            numSpeakers: sortformerConfig.numSpeakers,
-            frameDurationSeconds: sortformerConfig.frameDurationSeconds,
-            onsetPadFrames: 0,
-            maxStoredFrames: 11_250
-        )
+        let config = Self.timelineConfigForPreset(preset, numSpeakers: 10)
+        let d = LSEENDDiarizer(computeUnits: .cpuOnly, timelineConfig: config)
 
-        let d = SortformerDiarizer(config: sortformerConfig, timelineConfig: timelineConfig)
-
-        let models = try await SortformerModels.loadFromHuggingFace(
-            config: sortformerConfig,
-            progressHandler: { progress in
-                progressHandler?(progress.fractionCompleted * 0.85 + 0.05)
-            }
-        )
-
+        try await d.initialize(variant: variant)
         progressHandler?(0.9)
-        d.initialize(models: models)
+
         diarizer = d
 
         progressHandler?(1.0)
-        log.info("Sortformer models ready")
+        log.info("LS-EEND ready, speakers=\(d.numSpeakers ?? -1)")
     }
 
     /// Pre-enroll a known speaker before starting a session.
     ///
     /// Must be called after `prepareModels()` and before `startSession()`.
-    /// Enrollment resets the diarizer's internal buffers, so it cannot be
-    /// done mid-session.
     ///
     /// - Parameters:
     ///   - name: Display name for this speaker (e.g. "Alice").
@@ -151,6 +131,7 @@ public actor StreamingDiarizationEngine {
 
         let speaker = try diarizer.enrollSpeaker(
             withAudio: audioSamples,
+            sourceSampleRate: 16000,
             named: name
         )
 
@@ -166,9 +147,6 @@ public actor StreamingDiarizationEngine {
     }
 
     /// Start a streaming diarization session.
-    ///
-    /// Creates the `updates` stream and begins polling the Sortformer model
-    /// for new speaker segments.
     public func startSession() async throws {
         guard diarizer != nil else {
             throw StreamingDiarizationError.modelsNotPrepared
@@ -198,11 +176,10 @@ public actor StreamingDiarizationEngine {
     /// Samples must be 16kHz mono Float32.
     public func addAudio(_ samples: [Float]) {
         guard let diarizer, isSessionActive else { return }
-        diarizer.addAudio(samples)
+        try? diarizer.addAudio(samples, sourceSampleRate: 16000)
     }
 
-    /// The stream of diarization updates. Returns an immediately-finished
-    /// stream if no session is active.
+    /// The stream of diarization updates.
     public var updates: AsyncStream<StreamingDiarizationUpdate> {
         get async {
             if let stream = _updates { return stream }
@@ -211,19 +188,14 @@ public actor StreamingDiarizationEngine {
     }
 
     /// Stop the streaming session and return the complete finalized timeline.
-    ///
-    /// Flushes any remaining tentative segments, cancels the processing loop,
-    /// and returns all finalized segments from the session.
     public func stopSession() async throws -> [DiarizedSegment] {
         guard isSessionActive else {
             return []
         }
 
-        // Finalize the diarizer to flush remaining tentative frames
         if let diarizer {
             _ = try? diarizer.finalizeSession()
 
-            // Yield one last update with the finalized results
             let timeline = diarizer.timeline
             let allSpeakers = timeline.speakers
             var segments: [DiarizedSegment] = []
@@ -286,17 +258,8 @@ public actor StreamingDiarizationEngine {
                 finalizedSegments: finalized,
                 tentativeSegments: tentative
             ))
-        } catch let error as SortformerError {
-            switch error {
-            case .notInitialized, .modelLoadFailed:
-                log.error("Fatal diarization error: \(error.localizedDescription). Stopping.")
-                continuation?.finish()
-                processingTask?.cancel()
-            default:
-                log.error("Diarization error (transient): \(error.localizedDescription)")
-            }
         } catch {
-            log.error("Diarization error (transient): \(error.localizedDescription)")
+            log.error("Diarization error: \(error.localizedDescription)")
         }
     }
 
@@ -326,11 +289,29 @@ public actor StreamingDiarizationEngine {
         isSessionActive = false
     }
 
-    private static func configForPreset(_ preset: Preset) -> SortformerConfig {
+    private static func timelineConfigForPreset(_ preset: Preset, numSpeakers: Int) -> DiarizerTimelineConfig {
         switch preset {
-        case .fast: return .fastV2_1
-        case .balanced: return .balancedV2
-        case .highContext: return .highContextV2
+        case .fast:
+            return DiarizerTimelineConfig(
+                numSpeakers: numSpeakers,
+                frameDurationSeconds: 0.1,
+                onsetPadFrames: 0,
+                maxStoredFrames: 5_000
+            )
+        case .balanced:
+            return DiarizerTimelineConfig(
+                numSpeakers: numSpeakers,
+                frameDurationSeconds: 0.1,
+                onsetPadFrames: 0,
+                maxStoredFrames: 11_250
+            )
+        case .highContext:
+            return DiarizerTimelineConfig(
+                numSpeakers: numSpeakers,
+                frameDurationSeconds: 0.1,
+                onsetPadFrames: 0,
+                maxStoredFrames: 30_000
+            )
         }
     }
 }

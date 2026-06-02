@@ -27,16 +27,43 @@ struct HubApiDownloader: MLXLMCommon.Downloader {
         let repo = Hub.Repo(id: id)
         let onlineApi = token.map { HubApi(hfToken: $0) } ?? HubApi.shared
         let localPath = onlineApi.localRepoLocation(repo)
-        let cached = FileManager.default.fileExists(atPath: localPath.path)
 
-        let api = cached ? HubApi(hfToken: token, useOfflineMode: true) : onlineApi
+        // Treat the cached directory as fully downloaded only if no partial
+        // .incomplete files exist in HuggingFace's resume cache. Without this
+        // check, an interrupted download leaves the directory in place, we
+        // switch to offline mode, and the snapshot call fails permanently.
+        let downloadCacheDir = localPath.appendingPathComponent(".cache/huggingface/download")
+        let hasIncompleteDownloads: Bool = {
+            guard let entries = try? FileManager.default.contentsOfDirectory(
+                at: downloadCacheDir, includingPropertiesForKeys: nil) else { return false }
+            return entries.contains { $0.pathExtension == "incomplete" }
+        }()
+        let fullyCached = FileManager.default.fileExists(atPath: localPath.path) && !hasIncompleteDownloads
 
-        return try await api.snapshot(
-            from: repo,
-            revision: revision ?? "main",
-            matching: patterns.isEmpty ? ["*"] : patterns,
-            progressHandler: progressHandler
-        )
+        let api = fullyCached ? HubApi(hfToken: token, useOfflineMode: true) : onlineApi
+
+        do {
+            return try await api.snapshot(
+                from: repo,
+                revision: revision ?? "main",
+                matching: patterns.isEmpty ? ["*"] : patterns,
+                progressHandler: progressHandler
+            )
+        } catch {
+            // Defensive recovery: if we thought the cache was complete but the
+            // snapshot still failed (corrupt files, hash mismatch, etc.), wipe
+            // the local copy and re-download from scratch online.
+            if fullyCached {
+                try? FileManager.default.removeItem(at: localPath)
+                return try await onlineApi.snapshot(
+                    from: repo,
+                    revision: revision ?? "main",
+                    matching: patterns.isEmpty ? ["*"] : patterns,
+                    progressHandler: progressHandler
+                )
+            }
+            throw error
+        }
     }
 }
 

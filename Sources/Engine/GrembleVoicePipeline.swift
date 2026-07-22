@@ -56,11 +56,25 @@ public final class GrembleVoicePipeline {
     private var recordingStart: Date?
     private let dictionaryProcessor = DictionaryProcessor()
     private var prefillRefiner: PrefillMLXRefiner?
+    private let sharedParakeetManager: ParakeetModelManager?
+
+    /// The resident MLX refiner, if the pipeline is configured with `.mlx`.
+    ///
+    /// Host apps can reuse this for batch refinement work (e.g. post-session
+    /// transcript polish) instead of loading a second copy of the model.
+    /// Do not call `unloadModel()` on it while the pipeline is in use.
+    public var residentMLXRefiner: PrefillMLXRefiner? { prefillRefiner }
 
     // MARK: - Init
 
-    public init(config: PipelineConfig) {
+    /// - Parameters:
+    ///   - config: Pipeline configuration.
+    ///   - sharedParakeetManager: Optional shared `ParakeetModelManager`. Pass the
+    ///     same manager used elsewhere in the app so Parakeet model memory is
+    ///     allocated once instead of per-consumer.
+    public init(config: PipelineConfig, sharedParakeetManager: ParakeetModelManager? = nil) {
         self.config = config
+        self.sharedParakeetManager = sharedParakeetManager
     }
 
     // MARK: - Model Loading
@@ -85,7 +99,14 @@ public final class GrembleVoicePipeline {
         switch config.asrEngine {
         case .parakeet:
             PipelineLogger.asr.info("Loading Parakeet v3 model")
-            let engine = parakeetEngine ?? ParakeetStreamingEngine()
+            let engine: ParakeetStreamingEngine
+            if let existing = parakeetEngine {
+                engine = existing
+            } else if let manager = sharedParakeetManager {
+                engine = ParakeetStreamingEngine(modelManager: manager)
+            } else {
+                engine = ParakeetStreamingEngine()
+            }
             try await engine.loadModel(progressHandler: wrappedProgress)
             parakeetEngine = engine
 
